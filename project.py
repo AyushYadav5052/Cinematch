@@ -3,7 +3,7 @@ import pickle
 import pandas as pd
 import requests
 import numpy as np
-import gzip
+import lzma  # Required for .xz files
 
 # === CONFIGURATION ===
 st.set_page_config(
@@ -16,19 +16,19 @@ st.set_page_config(
 @st.cache_data
 def load_data():
     try:
-        # Load the movies dictionary
+        # 1. Load the movies dictionary
         with open('movies_dict.pkl', 'rb') as f:
             movies_dict = pickle.load(f)
         movies = pd.DataFrame(movies_dict)
         
-        # Load the compressed similarity matrix
-        # Added encoding='latin1' to handle cross-version Python pickle issues
-        with gzip.open('similarity_compressed.pkl.gz', 'rb') as f:
+        # 2. Load the .xz compressed Similarity Matrix
+        # Ensure this filename matches EXACTLY what you uploaded
+        with lzma.open('similarity.pkl.xz', 'rb') as f:
             similarity = pickle.load(f, encoding='latin1')
             
         return movies, similarity
     except Exception as e:
-        st.error(f"Error loading data files: {e}")
+        st.error(f"Error loading data: {e}")
         return None, None
 
 # Call the function to load your data
@@ -37,7 +37,7 @@ movies, similarity = load_data()
 # === API FUNCTIONS ===
 @st.cache_data(ttl=3600)
 def fetch_movie_details(title):
-    # Note: Free OMDb API keys have a 1,000 daily request limit
+    # Free OMDb API keys have a 1,000 daily request limit
     api_key = "55212a5c"  
     url = f"http://www.omdbapi.com/?t={title}&apikey={api_key}"
     try:
@@ -82,7 +82,7 @@ def recommend(movie_title, top_k=5):
             if details:
                 recs.append(details)
         return recs
-    except Exception as e:
+    except Exception:
         return []
 
 # === CSS STYLING ===
@@ -102,14 +102,6 @@ st.markdown("""
     margin: 2rem 0;
     text-align: center;
 }
-.input-section {
-    background: rgba(255,255,255,0.08);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255,255,255,0.2);
-    border-radius: 20px;
-    padding: 2.5rem;
-    margin-bottom: 3rem;
-}
 .movie-card {
     background: rgba(255,255,255,0.08);
     backdrop-filter: blur(20px);
@@ -117,12 +109,6 @@ st.markdown("""
     border-radius: 24px;
     padding: 2rem;
     margin-bottom: 2rem;
-}
-.meta-label {
-    color: #667eea;
-    font-weight: 600;
-    font-size: 0.9rem;
-    text-transform: uppercase;
 }
 h1 { 
     font-size: 3.5rem !important;
@@ -137,47 +123,37 @@ h1 {
 st.markdown("<div class='main-header'><h1>🎬 CineMatch</h1></div>", unsafe_allow_html=True)
 
 if movies is not None:
-    # Initialize session state for results
     if 'recommendations' not in st.session_state:
         st.session_state.recommendations = []
     if 'last_selected' not in st.session_state:
         st.session_state.last_selected = ""
 
-    with st.container():
-        st.markdown("<div class='input-section'>", unsafe_allow_html=True)
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            selected_movie = st.selectbox("", options=sorted(movies['title'].values), index=None,
-                                         placeholder="Search for a movie you love...")
-        with col2:
-            if st.button("🔍 MATCH ME"):
-                if selected_movie:
-                    with st.spinner('Scanning the multiverse for matches...'):
-                        st.session_state.recommendations = recommend(selected_movie)
-                        st.session_state.last_selected = selected_movie
-                else:
-                    st.warning("Please select a movie first!")
-        st.markdown("</div>", unsafe_allow_html=True)
+    # Search Bar
+    selected_movie = st.selectbox("Search for a movie:", options=sorted(movies['title'].values), index=None, placeholder="Search...")
+    
+    if st.button("🔍 MATCH ME"):
+        if selected_movie:
+            with st.spinner('Decompressing data and finding matches...'):
+                st.session_state.recommendations = recommend(selected_movie)
+                st.session_state.last_selected = selected_movie
+        else:
+            st.warning("Please select a movie!")
 
-    # === RESULTS SECTION ===
+    # Results Display
     if st.session_state.recommendations:
         st.subheader(f"Because you liked {st.session_state.last_selected}:")
         for movie in st.session_state.recommendations:
             col_img, col_info = st.columns([1, 2.5])
-            
             with col_img:
                 st.image(movie['poster'], use_container_width=True)
-
             with col_info:
                 st.markdown(f"""
                 <div class='movie-card'>
-                    <h2 style='color: white; margin-top: 0;'>{movie['title']} ({movie['year']})</h2>
-                    <p style='color: #ffd700; font-size: 1.1rem;'>⭐ {movie['rating']} | {movie['genre']}</p>
-                    <p><span class='meta-label'>Director:</span> <span style='color: white;'>{movie['director']}</span></p>
-                    <p><span class='meta-label'>Cast:</span> <span style='color: white;'>{movie['cast']}</span></p>
-                    <hr style='border: 0.5px solid rgba(255,255,255,0.1);'>
+                    <h2 style='color: white;'>{movie['title']} ({movie['year']})</h2>
+                    <p style='color: #ffd700;'>⭐ {movie['rating']} | {movie['genre']}</p>
+                    <p style='color: white;'><b>Director:</b> {movie['director']}</p>
                     <p style='color: rgba(255,255,255,0.9);'>{movie['plot']}</p>
                 </div>
                 """, unsafe_allow_html=True)
 else:
-    st.error("Wait for the dataset to be properly uploaded to GitHub before deploying!")
+    st.info("The application is still loading the dataset. Please wait.")
