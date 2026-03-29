@@ -15,16 +15,21 @@ st.set_page_config(
 # === LOAD DATA ===
 @st.cache_data
 def load_data():
-    # Load the movies dictionary
-    with open('movies_dict.pkl', 'rb') as f:
-        movies_dict = pickle.load(f)
-    movies = pd.DataFrame(movies_dict)
-    
-    # Load the compressed similarity matrix
-    with gzip.open('similarity_compressed.pkl.gz', 'rb') as f:
-        similarity = pickle.load(f)
+    try:
+        # Load the movies dictionary
+        with open('movies_dict.pkl', 'rb') as f:
+            movies_dict = pickle.load(f)
+        movies = pd.DataFrame(movies_dict)
         
-    return movies, similarity
+        # Load the compressed similarity matrix
+        # Added encoding='latin1' to handle cross-version Python pickle issues
+        with gzip.open('similarity_compressed.pkl.gz', 'rb') as f:
+            similarity = pickle.load(f, encoding='latin1')
+            
+        return movies, similarity
+    except Exception as e:
+        st.error(f"Error loading data files: {e}")
+        return None, None
 
 # Call the function to load your data
 movies, similarity = load_data()
@@ -32,10 +37,11 @@ movies, similarity = load_data()
 # === API FUNCTIONS ===
 @st.cache_data(ttl=3600)
 def fetch_movie_details(title):
-    api_key = "55212a5c"  # Your OMDb API Key
+    # Note: Free OMDb API keys have a 1,000 daily request limit
+    api_key = "55212a5c"  
     url = f"http://www.omdbapi.com/?t={title}&apikey={api_key}"
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=5)
         data = response.json()
         if data.get('Response') == 'False':
             return None
@@ -58,6 +64,8 @@ def fetch_movie_details(title):
         return None
 
 def recommend(movie_title, top_k=5):
+    if similarity is None:
+        return []
     try:
         # Finding the index of the selected movie
         movie_idx = movies[movies['title'].str.contains(movie_title, case=False, na=False)].index[0]
@@ -75,7 +83,6 @@ def recommend(movie_title, top_k=5):
                 recs.append(details)
         return recs
     except Exception as e:
-        st.error(f"Error in recommendation: {e}")
         return []
 
 # === CSS STYLING ===
@@ -111,11 +118,6 @@ st.markdown("""
     padding: 2rem;
     margin-bottom: 2rem;
 }
-.movie-poster {
-    width: 100%;
-    border-radius: 20px;
-    box-shadow: 0 10px 20px rgba(0,0,0,0.5);
-}
 .meta-label {
     color: #667eea;
     font-weight: 600;
@@ -134,42 +136,48 @@ h1 {
 # === HEADER & SEARCH ===
 st.markdown("<div class='main-header'><h1>🎬 CineMatch</h1></div>", unsafe_allow_html=True)
 
-# Initialize session state for results
-if 'recommendations' not in st.session_state:
-    st.session_state.recommendations = []
+if movies is not None:
+    # Initialize session state for results
+    if 'recommendations' not in st.session_state:
+        st.session_state.recommendations = []
+    if 'last_selected' not in st.session_state:
+        st.session_state.last_selected = ""
 
-with st.container():
-    st.markdown("<div class='input-section'>", unsafe_allow_html=True)
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        selected_movie = st.selectbox("", options=sorted(movies['title'].values), index=None,
-                                     placeholder="Search for a movie you love...")
-    with col2:
-        if st.button("🔍 MATCH ME"):
-            if selected_movie:
-                with st.spinner('Finding the best matches for you...'):
-                    st.session_state.recommendations = recommend(selected_movie)
-            else:
-                st.warning("Please select a movie first!")
-    st.markdown("</div>", unsafe_allow_html=True)
+    with st.container():
+        st.markdown("<div class='input-section'>", unsafe_allow_html=True)
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            selected_movie = st.selectbox("", options=sorted(movies['title'].values), index=None,
+                                         placeholder="Search for a movie you love...")
+        with col2:
+            if st.button("🔍 MATCH ME"):
+                if selected_movie:
+                    with st.spinner('Scanning the multiverse for matches...'):
+                        st.session_state.recommendations = recommend(selected_movie)
+                        st.session_state.last_selected = selected_movie
+                else:
+                    st.warning("Please select a movie first!")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-# === RESULTS SECTION ===
-if st.session_state.recommendations:
-    st.subheader(f"Because you liked {selected_movie}:")
-    for movie in st.session_state.recommendations:
-        col_img, col_info = st.columns([1, 2.5])
-        
-        with col_img:
-            st.image(movie['poster'], use_container_width=True)
+    # === RESULTS SECTION ===
+    if st.session_state.recommendations:
+        st.subheader(f"Because you liked {st.session_state.last_selected}:")
+        for movie in st.session_state.recommendations:
+            col_img, col_info = st.columns([1, 2.5])
+            
+            with col_img:
+                st.image(movie['poster'], use_container_width=True)
 
-        with col_info:
-            st.markdown(f"""
-            <div class='movie-card'>
-                <h2 style='color: white; margin-top: 0;'>{movie['title']} ({movie['year']})</h2>
-                <p style='color: #ffd700; font-size: 1.1rem;'>⭐ {movie['rating']} | {movie['genre']}</p>
-                <p><span class='meta-label'>Director:</span> <span style='color: white;'>{movie['director']}</span></p>
-                <p><span class='meta-label'>Cast:</span> <span style='color: white;'>{movie['cast']}</span></p>
-                <hr style='border: 0.5px solid rgba(255,255,255,0.1);'>
-                <p style='color: rgba(255,255,255,0.9);'>{movie['plot']}</p>
-            </div>
-            """, unsafe_allow_html=True)
+            with col_info:
+                st.markdown(f"""
+                <div class='movie-card'>
+                    <h2 style='color: white; margin-top: 0;'>{movie['title']} ({movie['year']})</h2>
+                    <p style='color: #ffd700; font-size: 1.1rem;'>⭐ {movie['rating']} | {movie['genre']}</p>
+                    <p><span class='meta-label'>Director:</span> <span style='color: white;'>{movie['director']}</span></p>
+                    <p><span class='meta-label'>Cast:</span> <span style='color: white;'>{movie['cast']}</span></p>
+                    <hr style='border: 0.5px solid rgba(255,255,255,0.1);'>
+                    <p style='color: rgba(255,255,255,0.9);'>{movie['plot']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+else:
+    st.error("Wait for the dataset to be properly uploaded to GitHub before deploying!")
