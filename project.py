@@ -3,7 +3,7 @@ import pickle
 import pandas as pd
 import requests
 import numpy as np
-
+import gzip
 # === CONFIGURATION ===
 st.set_page_config(
     page_title="🎬 CineMatch",
@@ -18,7 +18,10 @@ def load_data():
     # Note: Ensure these files exist in your directory
     movies_dict = pickle.load(open('movies_dict.pkl', 'rb'))
     movies = pd.DataFrame(movies_dict)
-    similarity = pickle.load(open('similarity.pkl', 'rb'))
+    
+
+with gzip.open('similarity_compressed.pkl.gz', 'rb') as f:
+    similarity = pickle.load(f)
     return movies, similarity
 
 
